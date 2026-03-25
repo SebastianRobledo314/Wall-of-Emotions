@@ -71,10 +71,6 @@ body {
   z-index: 200;
   transition: opacity 0.4s ease;
 }
-#status-overlay.fade-out {
-  opacity: 0;
-  pointer-events: none;
-}
 
 .status-inner {
   display: flex;

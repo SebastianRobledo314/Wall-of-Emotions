@@ -25,15 +25,14 @@ const PENCIL_WIDTH   = 8;     // trail line thickness
 
 // ─── Emotion → Color Map ──────────────────────────────────────
 const EMOTIONS = {
-  happy:     { r:255, g:220, b:0,   hex:'#FFDC00', name:'Happy'     },
-  sad:       { r:60,  g:100, b:255, hex:'#3C64FF', name:'Sad'       },
-  angry:     { r:255, g:30,  b:30,  hex:'#FF1E1E', name:'Angry'     },
-  disgusted: { r:30,  g:210, b:80,  hex:'#1ED250', name:'Disgusted' },
-  fearful:   { r:185, g:30,  b:255, hex:'#B91EFF', name:'Fearful'   },
-  surprised: { r:255, g:145, b:0,   hex:'#FF9100', name:'Surprised' },
-  neutral:   { r:200, g:200, b:220, hex:'#C8C8DC', name:'Neutral'   },
+  happy:     { hex:'#FFDC00', name:'Happy'     },
+  sad:       { hex:'#3C64FF', name:'Sad'       },
+  angry:     { hex:'#FF1E1E', name:'Angry'     },
+  disgusted: { hex:'#1ED250', name:'Disgusted' },
+  fearful:   { hex:'#B91EFF', name:'Fearful'   },
+  surprised: { hex:'#FF9100', name:'Surprised' },
+  neutral:   { hex:'#C8C8DC', name:'Neutral'   },
 };
-const GREY = { r:160, g:140, b:200 };
 
 // ─── Animated Background Blobs (purple / blue / pink / cyan) ──
 const BG_BLOBS = [
@@ -52,7 +51,6 @@ const PREVIEW_W = 160, PREVIEW_H = 120;
 let trail        = [];
 let curPos       = null;
 let curEmotion   = null;
-let handFound    = false;
 let detecting    = false;
 let lastSample   = 0;
 let instrGone    = false;
@@ -202,7 +200,6 @@ function onHandResults(results) {
     smoothX += (rawX - smoothX) * LERP_SPEED;
     smoothY += (rawY - smoothY) * LERP_SPEED;
     curPos = { x: smoothX, y: smoothY };
-    handFound = true;
 
     // Check for O-shape (erase gesture) first
     const oDetected = detectOShape(lm);
@@ -245,7 +242,6 @@ function onHandResults(results) {
     }
 
   } else {
-    handFound  = false;
     curEmotion = null;
     curPos     = null;
     isOShape   = false;
@@ -401,7 +397,7 @@ function trailLoop() {
 
   while (trail.length > 0) {
     const pt = trail.shift();
-    const col = EMOTIONS[pt.emotion] || GREY;
+    const col = EMOTIONS[pt.emotion];
 
     if (lastTrailPt && lastTrailPt.emotion === pt.emotion) {
       ctx.save();
@@ -496,5 +492,3 @@ function showError(msg) {
     errorMsg.style.display = 'block';
   }
 }
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
