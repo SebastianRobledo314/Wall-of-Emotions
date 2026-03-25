@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Emotion Canvas</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.min.js"></script>
+</head>
+<body>
+
+  <!-- Hidden video feed -->
+  <video id="video" autoplay muted playsinline></video>
+
+  <!-- Layer 1: animated rainbow background -->
+  <canvas id="bg-canvas"></canvas>
+
+  <!-- Layer 2: persistent glow trail -->
+  <canvas id="trail-canvas"></canvas>
+
+  <!-- Layer 3: erase progress overlay -->
+  <canvas id="erase-canvas"></canvas>
+
+  <!-- Hand preview (top-left) -->
+  <canvas id="hand-preview"></canvas>
+
+  <!-- Face tracking ring -->
+  <div id="face-ring"></div>
+
+  <!-- ─── Status Overlay (auto-dismisses, no button) ─── -->
+  <div id="status-overlay">
+    <div class="status-inner">
+      <h1 class="load-title">Emotion<br />Canvas</h1>
+      <p class="load-subtitle">Interactive Art Installation</p>
+      <div class="load-bar-wrap">
+        <div id="loading-bar"></div>
+      </div>
+      <p id="loading-status">Initializing…</p>
+      <p id="error-msg"></p>
+    </div>
+  </div>
+
+  <!-- ─── HUD Top Left ─── -->
+  <div id="hud-top">
+    <p class="hud-label">Interactive Installation</p>
+    <h2 class="hud-title">Emotion Canvas</h2>
+  </div>
+
+  <!-- ─── HUD Bottom Left – Emotion ─── -->
+  <div id="hud-emotion">
+    <div id="emotion-dot"></div>
+    <span id="emotion-name"></span>
+  </div>
+
+  <!-- ─── HUD Bottom Right – Legend ─── -->
+  <div id="hud-legend">
+    <div class="leg" id="leg-happy">
+      <span>Happy</span><div class="leg-dot" style="background:#FFD700;"></div>
+    </div>
+    <div class="leg" id="leg-sad">
+      <span>Sad</span><div class="leg-dot" style="background:#4169FF;"></div>
+    </div>
+    <div class="leg" id="leg-angry">
+      <span>Angry</span><div class="leg-dot" style="background:#FF2828;"></div>
+    </div>
+    <div class="leg" id="leg-disgusted">
+      <span>Disgusted</span><div class="leg-dot" style="background:#28C850;"></div>
+    </div>
+    <div class="leg" id="leg-fearful">
+      <span>Fearful</span><div class="leg-dot" style="background:#B428FF;"></div>
+    </div>
+    <div class="leg" id="leg-surprised">
+      <span>Surprised</span><div class="leg-dot" style="background:#FF8C00;"></div>
+    </div>
+    <div class="leg" id="leg-neutral">
+      <span>Neutral</span><div class="leg-dot" style="background:#ccc;"></div>
+    </div>
+  </div>
+
+  <!-- ─── Center Title ─── -->
+  <div id="instructions">
+    <p>Bubbles</p>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

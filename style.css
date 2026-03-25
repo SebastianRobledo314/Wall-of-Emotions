@@ -1,0 +1,276 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Space+Mono:wght@400&display=swap');
+
+*, *::before, *::after {
+  margin: 0; padding: 0; box-sizing: border-box;
+}
+
+body {
+  background: #1a0a3e;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  font-family: 'Cormorant Garamond', serif;
+  color: #fff;
+  cursor: none;
+}
+
+/* ─── Hidden Video ─── */
+#video {
+  position: fixed;
+  opacity: 0;
+  pointer-events: none;
+  width: 1px; height: 1px;
+  top: -9999px;
+}
+
+/* ─── Canvases ─── */
+#bg-canvas {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 0;
+}
+
+#trail-canvas {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 1;
+}
+
+#erase-canvas {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* ─── Face Ring ─── */
+#face-ring {
+  position: fixed;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 50%;
+  width: 70px; height: 85px;
+  pointer-events: none;
+  z-index: 9;
+  transform: translate(-50%, -50%);
+  top: -9999px; left: -9999px;
+  transition: border-color 0.5s, box-shadow 0.5s,
+              width 0.15s, height 0.15s;
+}
+
+/* ─── Status Overlay ─── */
+#status-overlay {
+  position: fixed;
+  inset: 0;
+  background: #1a0a3e;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  transition: opacity 0.4s ease;
+}
+#status-overlay.fade-out {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.status-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.load-title {
+  font-size: clamp(48px, 7vw, 100px);
+  font-weight: 300;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-align: center;
+  background: linear-gradient(135deg, #fff 20%, #e0aaff 60%, #ff9de2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.load-subtitle {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.38em;
+  opacity: 0.35;
+  margin-top: 14px;
+  text-transform: uppercase;
+}
+
+.load-bar-wrap {
+  width: 260px;
+  height: 1px;
+  background: rgba(255,255,255,0.08);
+  margin-top: 52px;
+}
+
+#loading-bar {
+  height: 1px;
+  background: linear-gradient(90deg, #a855f7, #ec4899, #f97316, #eab308, #22c55e, #3b82f6);
+  background-size: 200%;
+  width: 0%;
+  transition: width 0.4s ease;
+  animation: barShift 3s linear infinite;
+}
+
+@keyframes barShift {
+  0%   { background-position: 0% 50%;   }
+  100% { background-position: 200% 50%; }
+}
+
+#loading-status {
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.28em;
+  opacity: 0.3;
+  margin-top: 14px;
+  text-transform: uppercase;
+  transition: opacity 0.3s;
+}
+
+#error-msg {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: #ff5555;
+  margin-top: 20px;
+  display: none;
+  text-align: center;
+  line-height: 1.8;
+  max-width: 340px;
+}
+
+/* ─── Hand Preview ─── */
+#hand-preview {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  width: 160px;
+  height: 120px;
+  z-index: 55;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(0,0,0,0.4);
+  pointer-events: none;
+}
+
+/* ─── HUD Top Left ─── */
+#hud-top {
+  position: fixed;
+  top: 0; left: 0;
+  padding: 32px 48px;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.hud-label {
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.35em;
+  opacity: 0.3;
+  text-transform: uppercase;
+}
+
+.hud-title {
+  font-size: clamp(20px, 2.8vw, 34px);
+  font-weight: 300;
+  letter-spacing: 0.04em;
+  margin-top: 4px;
+  opacity: 0.65;
+  line-height: 1;
+}
+
+/* ─── HUD Bottom Left ─── */
+#hud-emotion {
+  position: fixed;
+  bottom: 0; left: 0;
+  padding: 32px 48px;
+  z-index: 50;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+#emotion-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.08);
+  flex-shrink: 0;
+  transition: background 0.5s, box-shadow 0.5s;
+}
+
+#emotion-name {
+  font-size: clamp(30px, 5vw, 68px);
+  font-weight: 300;
+  font-style: italic;
+  letter-spacing: 0.02em;
+  opacity: 0;
+  transition: opacity 0.5s, color 0.5s, text-shadow 0.5s;
+  line-height: 1;
+}
+
+/* ─── HUD Bottom Right – Legend ─── */
+#hud-legend {
+  position: fixed;
+  bottom: 0; right: 0;
+  padding: 32px 48px;
+  z-index: 50;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.leg {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: 'Space Mono', monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.18em;
+  opacity: 0.22;
+  text-transform: uppercase;
+  transition: opacity 0.4s;
+}
+.leg.active { opacity: 1; }
+
+.leg-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.leg.active .leg-dot {
+  box-shadow: 0 0 8px currentColor;
+}
+
+/* ─── Center Instructions ─── */
+#instructions {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  pointer-events: none;
+  transition: opacity 2.5s ease;
+}
+
+#instructions p {
+  font-size: clamp(28px, 4vw, 52px);
+  font-weight: 600;
+  font-style: normal;
+  font-family: 'Space Mono', monospace;
+  letter-spacing: 0.08em;
+  opacity: 0.85;
+  text-align: center;
+  line-height: 1;
+  text-shadow: 0 0 60px rgba(255,255,255,0.3);
+}
