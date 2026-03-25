@@ -58,6 +58,12 @@ let W = 0, H = 0;
 let smoothX = 0, smoothY = 0;
 let eraseStart = 0;         // timestamp when O-shape began
 let isOShape   = false;     // currently forming O?
+let faceEmotion = 'neutral';
+let faceBox     = null;
+
+// ─── Face Detection Config ────────────────────────────────────
+const FACE_DETECT_MS  = 120;
+const FACE_MODEL_URL  = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@master/weights';
 
 // ─── DOM refs ─────────────────────────────────────────────────
 let loadingBar, loadingStatus, statusOverlay, errorMsg;
@@ -143,7 +149,13 @@ function drawBackground(t) {
 // ─── MediaPipe Hands Init ─────────────────────────────────────
 async function initHands() {
   try {
-    setStatus('Loading hand tracker…', 20);
+    setStatus('Loading face + hand models…', 10);
+
+    // Load face-api.js models for expression detection
+    await faceapi.nets.tinyFaceDetector.loadFromUri(FACE_MODEL_URL);
+    await faceapi.nets.faceExpressionNet.loadFromUri(FACE_MODEL_URL);
+
+    setStatus('Loading hand tracker…', 30);
 
     const hands = new Hands({
       locateFile: (file) =>
@@ -173,12 +185,38 @@ async function initHands() {
     statusOverlay.remove();
     detecting = true;
     trailLoop();
+    faceDetectLoop();
 
   } catch (e) {
     setStatus('Error', 0);
     showError('Could not load hand tracker or camera.\nPlease allow camera access and refresh.');
     console.error(e);
   }
+}
+
+// ─── Face Detection Loop ──────────────────────────────────────
+async function faceDetectLoop() {
+  if (!detecting || video.readyState < 2) {
+    setTimeout(faceDetectLoop, FACE_DETECT_MS);
+    return;
+  }
+  try {
+    const result = await faceapi
+      .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+      .withFaceExpressions();
+    if (result) {
+      const box = result.detection.box;
+      const vw = video.videoWidth  || 1;
+      const vh = video.videoHeight || 1;
+      faceBox = { x: box.x / vw, y: box.y / vh, w: box.width / vw, h: box.height / vh };
+      // Pick the expression with highest probability
+      const sorted = result.expressions.asSortedArray();
+      if (sorted.length) faceEmotion = sorted[0].expression;
+    } else {
+      faceBox = null;
+    }
+  } catch (_) { /* ignore transient errors */ }
+  setTimeout(faceDetectLoop, FACE_DETECT_MS);
 }
 
 // ─── Hand Results Callback ────────────────────────────────────
@@ -216,19 +254,17 @@ function onHandResults(results) {
       isOShape = false;
       eraseStart = 0;
 
-      // Detect gesture → emotion
-      const gesture = classifyGesture(lm);
       const pointing = isPointing(lm);
-      curEmotion = gesture;
+      curEmotion = faceEmotion;
 
-      updateHUD(gesture);
-      updateRing(smoothX, smoothY, 50, 50, EMOTIONS[gesture]?.hex || '#aaa');
+      updateHUD(faceEmotion);
+      updateRing(smoothX, smoothY, 50, 50, EMOTIONS[faceEmotion]?.hex || '#aaa');
 
       // Only draw trail when pointing (index finger only)
       if (pointing) {
         const now = Date.now();
-        if (now - lastSample > SAMPLE_MS && gesture !== 'neutral') {
-          trail.push({ x: smoothX, y: smoothY, emotion: gesture, t: now });
+        if (now - lastSample > SAMPLE_MS && faceEmotion !== 'neutral') {
+          trail.push({ x: smoothX, y: smoothY, emotion: faceEmotion, t: now });
           lastSample = now;
         }
       } else {
@@ -251,11 +287,7 @@ function onHandResults(results) {
   }
 }
 
-// ─── Gesture Classification ───────────────────────────────────
-// Uses landmark distances to classify hand poses into emotions.
-// Landmarks: 0=wrist, 4=thumb tip, 8=index tip, 12=middle tip,
-//            16=ring tip, 20=pinky tip; MCPs: 5,9,13,17
-// ─── Hand Preview (top-left mini view) ────────────────────────
+// ─── Hand Preview (top-right mini view) ───────────────────────
 const HAND_CONNECTIONS = [
   [0,1],[1,2],[2,3],[3,4],       // thumb
   [0,5],[5,6],[6,7],[7,8],       // index
@@ -319,6 +351,37 @@ function drawHandPreview(results) {
     ctx.arc((1 - p.x) * PREVIEW_W, p.y * PREVIEW_H, 2, 0, Math.PI * 2);
     ctx.fill();
   }
+
+  // Draw face bounding box + emotion label
+  drawFaceOverlay(ctx);
+}
+
+function drawFaceOverlay(ctx) {
+  if (!faceBox) return;
+
+  // Mirror the face box X to match the mirrored camera feed
+  const fx = (1 - faceBox.x - faceBox.w) * PREVIEW_W;
+  const fy = faceBox.y * PREVIEW_H;
+  const fw = faceBox.w * PREVIEW_W;
+  const fh = faceBox.h * PREVIEW_H;
+
+  const emotionColor = EMOTIONS[faceEmotion]?.hex || '#fff';
+
+  // Box
+  ctx.strokeStyle = emotionColor;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(fx, fy, fw, fh);
+
+  // Label background
+  const label = faceEmotion.charAt(0).toUpperCase() + faceEmotion.slice(1);
+  ctx.font = '9px "Space Mono", monospace';
+  const tw = ctx.measureText(label).width;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(fx, fy - 12, tw + 6, 12);
+
+  // Label text
+  ctx.fillStyle = emotionColor;
+  ctx.fillText(label, fx + 3, fy - 3);
 }
 
 // ─── Pointing Detection (only index finger extended) ──────────
@@ -332,37 +395,6 @@ function detectOShape(lm) {
   const d = dist(lm[4], lm[8]);           // thumb tip to index tip
   const palmSize = dist(lm[0], lm[9]);    // wrist to middle MCP for scale
   return d < palmSize * 0.28;             // touching threshold
-}
-
-function classifyGesture(lm) {
-  const fingerExtended = getFingerStates(lm);
-  const [thumb, index, middle, ring, pinky] = fingerExtended;
-
-  // Fist — all fingers curled → Angry
-  if (!thumb && !index && !middle && !ring && !pinky) return 'angry';
-
-  // Open hand — all fingers extended → Happy
-  if (thumb && index && middle && ring && pinky) return 'happy';
-
-  // Peace sign — index + middle extended → Surprised
-  if (index && middle && !ring && !pinky) return 'surprised';
-
-  // Thumbs up — only thumb extended → Happy
-  if (thumb && !index && !middle && !ring && !pinky) return 'happy';
-
-  // One finger (index only) → Sad
-  if (!thumb && index && !middle && !ring && !pinky) return 'sad';
-
-  // Horns — index + pinky extended → Disgusted
-  if (index && !middle && !ring && pinky) return 'disgusted';
-
-  // Three fingers → Fearful
-  if (index && middle && ring && !pinky) return 'fearful';
-
-  // Pinky only → Fearful
-  if (!thumb && !index && !middle && !ring && pinky) return 'fearful';
-
-  return 'neutral';
 }
 
 function getFingerStates(lm) {
@@ -397,7 +429,7 @@ function trailLoop() {
 
   while (trail.length > 0) {
     const pt = trail.shift();
-    const col = EMOTIONS[pt.emotion];
+    const col = EMOTIONS[pt.emotion] || EMOTIONS.neutral;
 
     if (lastTrailPt && lastTrailPt.emotion === pt.emotion) {
       ctx.save();
@@ -492,3 +524,5 @@ function showError(msg) {
     errorMsg.style.display = 'block';
   }
 }
+
+
