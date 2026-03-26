@@ -19,7 +19,7 @@
 // ─── Configuration ────────────────────────────────────────────
 const SAMPLE_MS      = 16;    // ms between trail captures
 const LERP_SPEED     = 0.18;  // hand position smoothing (0–1)
-const ERASE_HOLD_MS  = 2000;  // hold O-shape this long to erase
+const ERASE_HOLD_MS  = 2500;  // hold O-shape this long to erase
 const ERASE_RADIUS   = 50;    // radius of the erase progress circle
 const PENCIL_WIDTH   = 8;     // trail line thickness
 
