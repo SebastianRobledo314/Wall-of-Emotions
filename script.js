@@ -71,6 +71,7 @@ let snapCenter  = null;      // center point between the two hands
 let faceEmotion = 'neutral';
 let faceBox     = null;
 let handOverFace = false;   // is the hand covering the face?
+let audioCtx    = null;     // Web Audio context (needs user gesture to resume)
 
 // ─── Face Detection Config ────────────────────────────────────
 const FACE_DETECT_MS  = 120;
@@ -109,20 +110,27 @@ window.addEventListener('DOMContentLoaded', () => {
   poofSfx       = document.getElementById('poof-sfx');
 
   // Amplify SFX beyond 1.0 using Web Audio API
-  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  if (eraseSfx) {
-    const eraseSource = audioCtx.createMediaElementSource(eraseSfx);
-    const eraseGain   = audioCtx.createGain();
-    eraseGain.gain.value = 3.0; // 3× amplification
-    eraseSource.connect(eraseGain);
-    eraseGain.connect(audioCtx.destination);
-  }
-  if (poofSfx) {
-    const poofSource = audioCtx.createMediaElementSource(poofSfx);
-    const poofGain   = audioCtx.createGain();
-    poofGain.gain.value = 3.0; // 3× amplification
-    poofSource.connect(poofGain);
-    poofGain.connect(audioCtx.destination);
+  // Deferred to first user interaction to avoid suspended AudioContext
+  function initAudioAmplification() {
+    if (audioCtx) return; // already initialised
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      if (eraseSfx) {
+        const eraseSource = audioCtx.createMediaElementSource(eraseSfx);
+        const eraseGain   = audioCtx.createGain();
+        eraseGain.gain.value = 3.0; // 3× amplification
+        eraseSource.connect(eraseGain);
+        eraseGain.connect(audioCtx.destination);
+      }
+      if (poofSfx) {
+        const poofSource = audioCtx.createMediaElementSource(poofSfx);
+        const poofGain   = audioCtx.createGain();
+        poofGain.gain.value = 3.0; // 3× amplification
+        poofSource.connect(poofGain);
+        poofGain.connect(audioCtx.destination);
+      }
+    } catch (e) { console.warn('Web Audio init failed:', e); }
   }
 
   resizeAll();
@@ -131,6 +139,8 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // Start background music on first user interaction (autoplay policy)
   const startMusic = () => {
+    initAudioAmplification();
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
     if (bgMusic) {
       bgMusic.volume = 0.35;
       bgMusic.play().catch(() => {});
@@ -234,6 +244,8 @@ async function initHands() {
     faceDetectLoop();
 
     // Try starting music now (camera permission counts as interaction)
+    initAudioAmplification();
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
     if (bgMusic) bgMusic.play().catch(() => {});
 
   } catch (e) {
@@ -687,6 +699,7 @@ function trailLoop() {
   eraseCtx.clearRect(0, 0, W, H);
   if (isOShape && eraseStart > 0 && curPos) {
     // Start eraser SFX loop
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
     if (eraseSfx && eraseSfx.paused) {
       eraseSfx.volume = 1.0;
       eraseSfx.currentTime = 0;
