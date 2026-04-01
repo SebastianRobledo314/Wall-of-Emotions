@@ -22,6 +22,7 @@ const SAMPLE_MS      = 16;    // ms between trail captures
 const LERP_SPEED     = 0.18;  // hand position smoothing (0–1)
 const ERASE_HOLD_MS  = 2500;  // hold O-shape this long to erase
 const UNDO_HOLD_MS   = 1500;  // hold T-shape this long to undo
+const SNAP_HOLD_MS   = 2000;  // hold dual-L this long to screenshot
 const ERASE_RADIUS   = 50;    // radius of the erase progress circle
 const PENCIL_WIDTH   = 8;     // trail line thickness
 
@@ -64,6 +65,9 @@ let undoHistory = [];        // canvas ImageData snapshots for undo
 let wasDrawing  = false;     // was user drawing in previous frame?
 let poofPlayed  = false;     // has poof SFX been triggered this gesture?
 const POOF_EARLY_MS = 500;   // play poof this many ms before action completes
+let snapStart   = 0;         // timestamp when dual-L screenshot gesture began
+let isSnapGesture = false;   // currently forming dual-L?
+let snapCenter  = null;      // center point between the two hands
 let faceEmotion = 'neutral';
 let faceBox     = null;
 let handOverFace = false;   // is the hand covering the face?
@@ -205,7 +209,7 @@ async function initHands() {
     });
 
     hands.setOptions({
-      maxNumHands: 1,
+      maxNumHands: 2,
       modelComplexity: 1,
       minDetectionConfidence: 0.6,
       minTrackingConfidence: 0.5,
@@ -275,6 +279,40 @@ function onHandResults(results) {
 
   // Draw hand preview
   drawHandPreview(results);
+
+  // ── Check for dual-L screenshot gesture (2 hands) ──
+  if (results.multiHandLandmarks && results.multiHandLandmarks.length === 2) {
+    const lm0 = results.multiHandLandmarks[0];
+    const lm1 = results.multiHandLandmarks[1];
+
+    if (detectLShape(lm0) && detectLShape(lm1)) {
+      isSnapGesture = true;
+      isOShape = false; eraseStart = 0;
+      isTShape = false; undoStart = 0;
+      wasDrawing = false;
+      curEmotion = null;
+      lastTrailPt = null;
+
+      // Center between the two index fingertips (mirrored)
+      const cx = ((1 - lm0[8].x) + (1 - lm1[8].x)) / 2 * W;
+      const cy = (lm0[8].y + lm1[8].y) / 2 * H;
+      snapCenter = { x: cx, y: cy };
+
+      if (snapStart === 0) snapStart = Date.now();
+      updateHUD(null);
+      hideRing();
+
+      if (!instrGone) { instrEl.style.opacity = '0'; instrGone = true; }
+      return; // skip single-hand processing
+    }
+  }
+
+  // If we were in snap gesture but lost it, reset
+  if (isSnapGesture) {
+    isSnapGesture = false;
+    snapStart = 0;
+    snapCenter = null;
+  }
 
   if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
     const lm = results.multiHandLandmarks[0];
@@ -359,6 +397,9 @@ function onHandResults(results) {
     isTShape   = false;
     undoStart  = 0;
     wasDrawing = false;
+    isSnapGesture = false;
+    snapStart  = 0;
+    snapCenter = null;
     setHandWarning(false);
     updateHUD(null);
     hideRing();
@@ -502,6 +543,35 @@ function detectTShape(lm) {
 
   // Accept angles between 50° and 130° (roughly perpendicular)
   return angle > 50 && angle < 130;
+}
+
+// ─── L-Shape Detection (thumb + index at ~90°, others closed → screenshot) ─
+function detectLShape(lm) {
+  const [thumb, index, middle, ring, pinky] = getFingerStates(lm);
+
+  // L-shape: thumb and index extended, others closed
+  if (!thumb || !index || middle || ring || pinky) return false;
+
+  // Must NOT be O-shape (thumb & index touching)
+  const d = dist(lm[4], lm[8]);
+  const palmSize = dist(lm[0], lm[9]);
+  if (d < palmSize * 0.28) return false;
+
+  // Thumb direction: MCP → tip
+  const thumbDir = { x: lm[4].x - lm[2].x, y: lm[4].y - lm[2].y };
+  // Index direction: MCP → tip
+  const indexDir = { x: lm[8].x - lm[5].x, y: lm[8].y - lm[5].y };
+
+  const dotP = thumbDir.x * indexDir.x + thumbDir.y * indexDir.y;
+  const magT = Math.sqrt(thumbDir.x ** 2 + thumbDir.y ** 2);
+  const magI = Math.sqrt(indexDir.x ** 2 + indexDir.y ** 2);
+  if (magT < 0.001 || magI < 0.001) return false;
+
+  const cosAngle = dotP / (magT * magI);
+  const angle = Math.acos(Math.max(-1, Math.min(1, cosAngle))) * 180 / Math.PI;
+
+  // Accept angles between 60° and 120° (roughly perpendicular = L)
+  return angle > 60 && angle < 120;
 }
 
 function getFingerStates(lm) {
@@ -729,7 +799,72 @@ function trailLoop() {
     if (undoSfx && !undoSfx.paused) { undoSfx.pause(); undoSfx.currentTime = 0; }
   }
 
+  // ── Screenshot progress (dual-L) — drawn on erase overlay ──
+  if (isSnapGesture && snapStart > 0 && snapCenter) {
+    const elapsed  = now - snapStart;
+    const progress = Math.min(elapsed / SNAP_HOLD_MS, 1);
+    const endAngle = -Math.PI / 2 + progress * Math.PI * 2;
+
+    // Interpolate white → yellow
+    const sR = 255;
+    const sG = Math.round(255 * (1 - progress) + 220 * progress);
+    const sB = Math.round(255 * (1 - progress));
+
+    eraseCtx.save();
+    eraseCtx.lineWidth   = 4;
+    eraseCtx.strokeStyle = `rgba(${sR},${sG},${sB},0.9)`;
+    eraseCtx.beginPath();
+    eraseCtx.arc(snapCenter.x, snapCenter.y, ERASE_RADIUS, -Math.PI / 2, endAngle);
+    eraseCtx.stroke();
+
+    // "📸 SCREENSHOT" label
+    eraseCtx.fillStyle  = `rgba(${sR},${sG},${sB},0.8)`;
+    eraseCtx.font       = '12px "Space Mono", monospace';
+    eraseCtx.textAlign  = 'center';
+    eraseCtx.fillText('SCREENSHOT', snapCenter.x, snapCenter.y + ERASE_RADIUS + 18);
+    eraseCtx.restore();
+
+    // Full circle → take screenshot
+    if (progress >= 1) {
+      captureScreenshot();
+      snapStart = 0;
+      isSnapGesture = false;
+      snapCenter = null;
+    }
+  }
+
   requestAnimationFrame(trailLoop);
+}
+
+// ─── Screenshot Capture ───────────────────────────────────────
+function captureScreenshot() {
+  // Merge bg-canvas + trail-canvas only (no HUD, no camera)
+  const shotCanvas = document.createElement('canvas');
+  shotCanvas.width  = W;
+  shotCanvas.height = H;
+  const shotCtx = shotCanvas.getContext('2d');
+  shotCtx.drawImage(bgCanvas, 0, 0);
+  shotCtx.drawImage(trailCanvas, 0, 0);
+
+  // Trigger download
+  const link = document.createElement('a');
+  link.download = `emotion-canvas-${Date.now()}.png`;
+  link.href = shotCanvas.toDataURL('image/png');
+  link.click();
+
+  // Flash effect – slow dissolve
+  let flashOpacity = 0.7;
+  function fadeFlash() {
+    eraseCtx.clearRect(0, 0, W, H);
+    if (flashOpacity <= 0) return;
+    eraseCtx.save();
+    eraseCtx.fillStyle = `rgba(255,255,255,${flashOpacity})`;
+    eraseCtx.fillRect(0, 0, W, H);
+    eraseCtx.restore();
+    flashOpacity -= 0.012;          // ~60 frames → ~1 second fade
+    requestAnimationFrame(fadeFlash);
+  }
+  fadeFlash();
 }
 
 // ─── HUD Updates ──────────────────────────────────────────────
