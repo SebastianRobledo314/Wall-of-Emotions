@@ -113,6 +113,13 @@ function initAudioAmplification() {
       undoSource.connect(undoGain);
       undoGain.connect(audioCtx.destination);
     }
+    if (cameraSfx) {
+      const camSource = audioCtx.createMediaElementSource(cameraSfx);
+      const camGain   = audioCtx.createGain();
+      camGain.gain.value = 3.0;
+      camSource.connect(camGain);
+      camGain.connect(audioCtx.destination);
+    }
     if (bgMusic) {
       const musicSource = audioCtx.createMediaElementSource(bgMusic);
       const musicGain   = audioCtx.createGain();
@@ -129,7 +136,7 @@ const FACE_MODEL_URL  = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.
 
 // ─── DOM refs ─────────────────────────────────────────────────
 let loadingBar, loadingStatus, statusOverlay, errorMsg;
-let emotionDot, emotionName, instrEl, faceRing, handWarning, bgMusic, eraseSfx, undoSfx, poofSfx;
+let emotionDot, emotionName, instrEl, faceRing, handWarning, bgMusic, eraseSfx, undoSfx, poofSfx, cameraSfx;
 
 // ─── Boot ─────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
@@ -158,6 +165,7 @@ window.addEventListener('DOMContentLoaded', () => {
   eraseSfx      = document.getElementById('erase-sfx');
   undoSfx       = document.getElementById('undo-sfx');
   poofSfx       = document.getElementById('poof-sfx');
+  cameraSfx     = document.getElementById('camera-sfx');
 
   // Audio amplification is now handled by the module-level initAudioAmplification()
 
@@ -880,6 +888,14 @@ function trailLoop() {
 
 // ─── Screenshot Capture ───────────────────────────────────────
 function captureScreenshot() {
+  // Play camera shutter SFX (seconds 2–3 only)
+  if (cameraSfx) {
+    cameraSfx.currentTime = 2;
+    cameraSfx.volume = 1.0;
+    cameraSfx.play().catch(() => {});
+    setTimeout(() => { cameraSfx.pause(); cameraSfx.currentTime = 0; }, 1000);
+  }
+
   // Merge bg-canvas + trail-canvas only (no HUD, no camera)
   const shotCanvas = document.createElement('canvas');
   shotCanvas.width  = W;
