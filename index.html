@@ -14,6 +14,16 @@
   <!-- Hidden video feed -->
   <video id="video" autoplay muted playsinline></video>
 
+  <!-- Background music -->
+  <audio id="bg-music" loop preload="auto">
+    <source src="Short Meditation Music - 3 Minute Relaxation, Calming.mp3" type="audio/mpeg" />
+  </audio>
+
+  <!-- Eraser sound effect -->
+  <audio id="erase-sfx" loop preload="auto">
+    <source src="Eraser Sound Effects [Free Audio].mp3" type="audio/mpeg" />
+  </audio>
+
   <!-- Layer 1: animated rainbow background -->
   <canvas id="bg-canvas"></canvas>
 
@@ -65,18 +75,25 @@
     <div class="leg" id="leg-angry">
       <span>Angry</span><div class="leg-dot" style="background:#FF2828;"></div>
     </div>
-    <div class="leg" id="leg-disgusted">
-      <span>Disgusted</span><div class="leg-dot" style="background:#28C850;"></div>
-    </div>
-    <div class="leg" id="leg-fearful">
-      <span>Fearful</span><div class="leg-dot" style="background:#B428FF;"></div>
-    </div>
     <div class="leg" id="leg-surprised">
-      <span>Surprised</span><div class="leg-dot" style="background:#FF8C00;"></div>
+      <span>Surprised</span><div class="leg-dot" style="background:#1ED250;"></div>
     </div>
     <div class="leg" id="leg-neutral">
       <span>Neutral</span><div class="leg-dot" style="background:#ccc;"></div>
     </div>
+    <div class="leg-divider"></div>
+    <div class="leg" id="leg-undo">
+      <span>Undo (T)</span><div class="leg-dot" style="background:#ffffff;"></div>
+    </div>
+    <div class="leg" id="leg-erase">
+      <span>Erase (O)</span><div class="leg-dot" style="background:linear-gradient(90deg,#ffffff,#ff1e1e);"></div>
+    </div>
+  </div>
+
+  <!-- ─── Hand-over-face Warning ─── -->
+  <div id="hand-warning">
+    <img src="warning.png" alt="Warning" />
+    <p>Please remove your hand from your face</p>
   </div>
 
   <!-- ─── Center Title ─── -->

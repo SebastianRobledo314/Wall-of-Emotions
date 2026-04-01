@@ -9,10 +9,11 @@
    Hand gestures → emotion colors:
      Open hand  = Happy (yellow)
      Fist       = Angry (red)
-     Peace sign = Surprised (orange)
+     Peace sign = Surprised (green)
      Thumbs up  = Happy (yellow)
      One finger = Sad (blue)
-     Horns      = Disgusted (green)
+     T-shape    = Undo last stroke (hold 1.5s)
+     O-shape    = Erase all (hold 2.5s)
      No hand    = no trail
 ================================================================ */
 
@@ -20,6 +21,7 @@
 const SAMPLE_MS      = 16;    // ms between trail captures
 const LERP_SPEED     = 0.18;  // hand position smoothing (0–1)
 const ERASE_HOLD_MS  = 2500;  // hold O-shape this long to erase
+const UNDO_HOLD_MS   = 1500;  // hold T-shape this long to undo
 const ERASE_RADIUS   = 50;    // radius of the erase progress circle
 const PENCIL_WIDTH   = 8;     // trail line thickness
 
@@ -28,9 +30,7 @@ const EMOTIONS = {
   happy:     { hex:'#FFDC00', name:'Happy'     },
   sad:       { hex:'#3C64FF', name:'Sad'       },
   angry:     { hex:'#FF1E1E', name:'Angry'     },
-  disgusted: { hex:'#1ED250', name:'Disgusted' },
-  fearful:   { hex:'#B91EFF', name:'Fearful'   },
-  surprised: { hex:'#FF9100', name:'Surprised' },
+  surprised: { hex:'#1ED250', name:'Surprised' },
   neutral:   { hex:'#C8C8DC', name:'Neutral'   },
 };
 
@@ -58,8 +58,13 @@ let W = 0, H = 0;
 let smoothX = 0, smoothY = 0;
 let eraseStart = 0;         // timestamp when O-shape began
 let isOShape   = false;     // currently forming O?
+let undoStart  = 0;         // timestamp when T-shape began
+let isTShape   = false;     // currently forming T?
+let undoHistory = [];        // canvas ImageData snapshots for undo
+let wasDrawing  = false;     // was user drawing in previous frame?
 let faceEmotion = 'neutral';
 let faceBox     = null;
+let handOverFace = false;   // is the hand covering the face?
 
 // ─── Face Detection Config ────────────────────────────────────
 const FACE_DETECT_MS  = 120;
@@ -67,7 +72,7 @@ const FACE_MODEL_URL  = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.
 
 // ─── DOM refs ─────────────────────────────────────────────────
 let loadingBar, loadingStatus, statusOverlay, errorMsg;
-let emotionDot, emotionName, instrEl, faceRing;
+let emotionDot, emotionName, instrEl, faceRing, handWarning, bgMusic, eraseSfx;
 
 // ─── Boot ─────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
@@ -91,10 +96,25 @@ window.addEventListener('DOMContentLoaded', () => {
   emotionName   = document.getElementById('emotion-name');
   instrEl       = document.getElementById('instructions');
   faceRing      = document.getElementById('face-ring');
+  handWarning   = document.getElementById('hand-warning');
+  bgMusic       = document.getElementById('bg-music');
+  eraseSfx      = document.getElementById('erase-sfx');
 
   resizeAll();
   window.addEventListener('resize', resizeAll);
   bgLoop(performance.now());
+
+  // Start background music on first user interaction (autoplay policy)
+  const startMusic = () => {
+    if (bgMusic) {
+      bgMusic.volume = 0.35;
+      bgMusic.play().catch(() => {});
+    }
+    document.removeEventListener('click', startMusic);
+    document.removeEventListener('pointerdown', startMusic);
+  };
+  document.addEventListener('click', startMusic);
+  document.addEventListener('pointerdown', startMusic);
 
   initHands();
 });
@@ -108,6 +128,7 @@ function resizeAll() {
   eraseCanvas.width = W; eraseCanvas.height = H;
   trailCtx.clearRect(0, 0, W, H);
   eraseCtx.clearRect(0, 0, W, H);
+  undoHistory.length = 0;
 }
 
 // ─── Background Render Loop ────────────────────────────────────
@@ -187,6 +208,9 @@ async function initHands() {
     trailLoop();
     faceDetectLoop();
 
+    // Try starting music now (camera permission counts as interaction)
+    if (bgMusic) bgMusic.play().catch(() => {});
+
   } catch (e) {
     setStatus('Error', 0);
     showError('Could not load hand tracker or camera.\nPlease allow camera access and refresh.');
@@ -211,7 +235,12 @@ async function faceDetectLoop() {
       faceBox = { x: box.x / vw, y: box.y / vh, w: box.width / vw, h: box.height / vh };
       // Pick the expression with highest probability
       const sorted = result.expressions.asSortedArray();
-      if (sorted.length) faceEmotion = sorted[0].expression;
+      if (sorted.length) {
+        let detected = sorted[0].expression;
+        // Remap removed emotions to neutral
+        if (detected === 'fearful' || detected === 'disgusted') detected = 'neutral';
+        faceEmotion = detected;
+      }
     } else {
       faceBox = null;
     }
@@ -239,38 +268,62 @@ function onHandResults(results) {
     smoothY += (rawY - smoothY) * LERP_SPEED;
     curPos = { x: smoothX, y: smoothY };
 
-    // Check for O-shape (erase gesture) first
+    // Check for O-shape (erase) → T-shape (undo) → pointing (draw)
     const oDetected = detectOShape(lm);
+    const tDetected = !oDetected && detectTShape(lm);
 
     if (oDetected) {
       isOShape = true;
+      isTShape = false; undoStart = 0; wasDrawing = false;
       if (eraseStart === 0) eraseStart = Date.now();
       curEmotion = null;
-      lastTrailPt = null;  // break trail so O-shape doesn't draw
+      lastTrailPt = null;
       updateHUD(null);
-      updateRing(smoothX, smoothY, 50, 50, '#ffffff');
+      updateRing(smoothX, smoothY, 50, 50, '#ffffff', false);
+
+    } else if (tDetected) {
+      isTShape = true;
+      isOShape = false; eraseStart = 0; wasDrawing = false;
+      if (undoStart === 0) undoStart = Date.now();
+      curEmotion = null;
+      lastTrailPt = null;
+      updateHUD(null);
+      updateRing(smoothX, smoothY, 50, 50, '#ffffff', false);
+
     } else {
-      if (isOShape) lastTrailPt = null; // break trail coming out of O
-      isOShape = false;
-      eraseStart = 0;
+      if (isOShape) lastTrailPt = null;
+      if (isTShape) lastTrailPt = null;
+      isOShape = false; eraseStart = 0;
+      isTShape = false; undoStart = 0;
 
       const pointing = isPointing(lm);
       curEmotion = faceEmotion;
 
+      const isDrawing = pointing && faceEmotion !== 'neutral';
       updateHUD(faceEmotion);
-      updateRing(smoothX, smoothY, 50, 50, EMOTIONS[faceEmotion]?.hex || '#aaa');
+      updateRing(smoothX, smoothY, 50, 50, EMOTIONS[faceEmotion]?.hex || '#aaa', isDrawing);
 
       // Only draw trail when pointing (index finger only)
       if (pointing) {
         const now = Date.now();
+        // Save canvas state when a new stroke begins
+        if (!wasDrawing) {
+          undoHistory.push(trailCtx.getImageData(0, 0, W, H));
+          if (undoHistory.length > 20) undoHistory.shift();
+          wasDrawing = true;
+        }
         if (now - lastSample > SAMPLE_MS && faceEmotion !== 'neutral') {
           trail.push({ x: smoothX, y: smoothY, emotion: faceEmotion, t: now });
           lastSample = now;
         }
       } else {
-        lastTrailPt = null; // break trail when not pointing
+        lastTrailPt = null;
+        wasDrawing = false;
       }
     }
+
+    // ── Hand-over-face detection ──
+    checkHandOverFace(lm);
 
     if (!instrGone) {
       instrEl.style.opacity = '0';
@@ -282,6 +335,10 @@ function onHandResults(results) {
     curPos     = null;
     isOShape   = false;
     eraseStart = 0;
+    isTShape   = false;
+    undoStart  = 0;
+    wasDrawing = false;
+    setHandWarning(false);
     updateHUD(null);
     hideRing();
   }
@@ -397,6 +454,35 @@ function detectOShape(lm) {
   return d < palmSize * 0.28;             // touching threshold
 }
 
+// ─── T-Shape Detection (thumb ⊥ index, others closed → undo) ─
+function detectTShape(lm) {
+  const [thumb, index, middle, ring, pinky] = getFingerStates(lm);
+
+  // T-shape: thumb and index extended, others closed
+  if (!thumb || !index || middle || ring || pinky) return false;
+
+  // Must NOT be O-shape (thumb & index touching)
+  const d = dist(lm[4], lm[8]);
+  const palmSize = dist(lm[0], lm[9]);
+  if (d < palmSize * 0.28) return false;
+
+  // Thumb direction: MCP → tip
+  const thumbDir = { x: lm[4].x - lm[2].x, y: lm[4].y - lm[2].y };
+  // Index direction: MCP → tip
+  const indexDir = { x: lm[8].x - lm[5].x, y: lm[8].y - lm[5].y };
+
+  const dot  = thumbDir.x * indexDir.x + thumbDir.y * indexDir.y;
+  const magT = Math.sqrt(thumbDir.x ** 2 + thumbDir.y ** 2);
+  const magI = Math.sqrt(indexDir.x ** 2 + indexDir.y ** 2);
+  if (magT < 0.001 || magI < 0.001) return false;
+
+  const cosAngle = dot / (magT * magI);
+  const angle = Math.acos(Math.max(-1, Math.min(1, cosAngle))) * 180 / Math.PI;
+
+  // Accept angles between 50° and 130° (roughly perpendicular)
+  return angle > 50 && angle < 130;
+}
+
 function getFingerStates(lm) {
   // Thumb: compare tip (4) to IP joint (3) in x-direction relative to wrist
   const thumbOpen = dist(lm[4], lm[9]) > dist(lm[3], lm[9]);
@@ -413,6 +499,47 @@ function getFingerStates(lm) {
 function dist(a, b) {
   const dx = a.x - b.x, dy = a.y - b.y, dz = (a.z || 0) - (b.z || 0);
   return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+// ─── Hand-over-face warning ──────────────────────────────────
+function checkHandOverFace(lm) {
+  if (!faceBox) { setHandWarning(false); return; }
+
+  // Compute hand bounding box in normalised coords (un-mirrored, same as faceBox)
+  let hMinX = 1, hMaxX = 0, hMinY = 1, hMaxY = 0;
+  for (const p of lm) {
+    if (p.x < hMinX) hMinX = p.x;
+    if (p.x > hMaxX) hMaxX = p.x;
+    if (p.y < hMinY) hMinY = p.y;
+    if (p.y > hMaxY) hMaxY = p.y;
+  }
+
+  // AABB overlap test
+  const fb = faceBox;
+  const overlap =
+    hMinX < fb.x + fb.w &&
+    hMaxX > fb.x &&
+    hMinY < fb.y + fb.h &&
+    hMaxY > fb.y;
+
+  // Require significant overlap (at least 30% of face area covered)
+  if (overlap) {
+    const ox = Math.max(0, Math.min(hMaxX, fb.x + fb.w) - Math.max(hMinX, fb.x));
+    const oy = Math.max(0, Math.min(hMaxY, fb.y + fb.h) - Math.max(hMinY, fb.y));
+    const overlapArea = ox * oy;
+    const faceArea = fb.w * fb.h;
+    setHandWarning(overlapArea > faceArea * 0.30);
+  } else {
+    setHandWarning(false);
+  }
+}
+
+function setHandWarning(show) {
+  if (show === handOverFace) return; // no change
+  handOverFace = show;
+  if (handWarning) {
+    handWarning.classList.toggle('visible', show);
+  }
 }
 
 // ─── Trail Render Loop (60fps) ────────────────────────────────
@@ -451,16 +578,33 @@ function trailLoop() {
   // ── Erase circle progress (O-shape) — drawn on separate overlay ──
   eraseCtx.clearRect(0, 0, W, H);
   if (isOShape && eraseStart > 0 && curPos) {
+    // Start eraser SFX loop
+    if (eraseSfx && eraseSfx.paused) {
+      eraseSfx.currentTime = 0;
+      eraseSfx.play().catch(() => {});
+    }
+
     const elapsed  = now - eraseStart;
     const progress = Math.min(elapsed / ERASE_HOLD_MS, 1); // 0→1
     const endAngle = -Math.PI / 2 + progress * Math.PI * 2;
 
+    // Interpolate color from white → red based on progress
+    const r = 255;
+    const g = Math.round(255 * (1 - progress));
+    const b = Math.round(255 * (1 - progress));
+
     eraseCtx.save();
     eraseCtx.lineWidth   = 4;
-    eraseCtx.strokeStyle = 'rgba(255,255,255,0.9)';
+    eraseCtx.strokeStyle = `rgba(${r},${g},${b},0.9)`;
     eraseCtx.beginPath();
     eraseCtx.arc(curPos.x, curPos.y, ERASE_RADIUS, -Math.PI / 2, endAngle);
     eraseCtx.stroke();
+
+    // "ERASING" label below progress ring
+    eraseCtx.fillStyle  = `rgba(${r},${g},${b},0.8)`;
+    eraseCtx.font       = '12px "Space Mono", monospace';
+    eraseCtx.textAlign  = 'center';
+    eraseCtx.fillText('ERASING', curPos.x, curPos.y + ERASE_RADIUS + 18);
     eraseCtx.restore();
 
     // Full circle reached → erase everything
@@ -470,6 +614,45 @@ function trailLoop() {
       lastTrailPt = null;
       trail.length = 0;
       eraseStart = 0;
+      undoHistory.length = 0; // nothing left to undo
+      if (eraseSfx) { eraseSfx.pause(); eraseSfx.currentTime = 0; }
+    }
+  } else {
+    // Not erasing → stop SFX if playing
+    if (eraseSfx && !eraseSfx.paused) { eraseSfx.pause(); eraseSfx.currentTime = 0; }
+  }
+
+  // ── Undo circle progress (T-shape) — drawn on erase overlay ──
+  if (isTShape && undoStart > 0 && curPos) {
+    const elapsed  = now - undoStart;
+    const progress = Math.min(elapsed / UNDO_HOLD_MS, 1);
+    const endAngle = -Math.PI / 2 + progress * Math.PI * 2;
+
+    eraseCtx.save();
+    eraseCtx.lineWidth   = 4;
+    eraseCtx.strokeStyle = 'rgba(255,255,255,0.9)';
+    eraseCtx.beginPath();
+    eraseCtx.arc(curPos.x, curPos.y, ERASE_RADIUS, -Math.PI / 2, endAngle);
+    eraseCtx.stroke();
+
+    // "UNDO" label below progress ring
+    eraseCtx.fillStyle  = 'rgba(255,255,255,0.8)';
+    eraseCtx.font       = '12px "Space Mono", monospace';
+    eraseCtx.textAlign  = 'center';
+    eraseCtx.fillText('UNDO', curPos.x, curPos.y + ERASE_RADIUS + 18);
+    eraseCtx.restore();
+
+    // Full circle reached → undo last stroke
+    if (progress >= 1) {
+      if (undoHistory.length > 0) {
+        const snapshot = undoHistory.pop();
+        ctx.clearRect(0, 0, W, H);
+        ctx.putImageData(snapshot, 0, 0);
+      }
+      eraseCtx.clearRect(0, 0, W, H);
+      lastTrailPt = null;
+      trail.length = 0;
+      undoStart = 0;
     }
   }
 
@@ -498,13 +681,27 @@ function updateHUD(emotion) {
   }
 }
 
-function updateRing(cx, cy, fw, fh, hex) {
+function updateRing(cx, cy, fw, fh, hex, drawing) {
   faceRing.style.left        = cx + 'px';
   faceRing.style.top         = cy + 'px';
-  faceRing.style.width       = Math.max(50, fw * 0.5) + 'px';
-  faceRing.style.height      = Math.max(60, fh * 0.5) + 'px';
-  faceRing.style.borderColor = hex + '40';
-  faceRing.style.boxShadow   = `0 0 12px ${hex}30, inset 0 0 8px ${hex}18`;
+
+  if (drawing) {
+    faceRing.classList.add('drawing');
+    faceRing.style.width       = Math.max(50, fw * 0.5) + 'px';
+    faceRing.style.height      = Math.max(60, fh * 0.5) + 'px';
+    faceRing.style.background  = 'transparent';
+    faceRing.style.borderColor = hex + '40';
+    faceRing.style.boxShadow   = `0 0 12px ${hex}30, inset 0 0 8px ${hex}18`;
+    faceRing.style.filter      = 'none';
+  } else {
+    faceRing.classList.remove('drawing');
+    faceRing.style.width       = Math.max(50, fw * 0.5) + 'px';
+    faceRing.style.height      = Math.max(60, fh * 0.5) + 'px';
+    faceRing.style.background  = 'transparent';
+    faceRing.style.borderColor = hex + '40';
+    faceRing.style.boxShadow   = `0 0 12px ${hex}30, inset 0 0 8px ${hex}18`;
+    faceRing.style.filter      = 'none';
+  }
 }
 
 function hideRing() {

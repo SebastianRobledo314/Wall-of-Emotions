@@ -57,7 +57,15 @@ body {
   transform: translate(-50%, -50%);
   top: -9999px; left: -9999px;
   transition: border-color 0.5s, box-shadow 0.5s,
-              width 0.15s, height 0.15s;
+              width 0.15s, height 0.15s,
+              border-radius 0.25s, clip-path 0.25s;
+}
+
+#face-ring.drawing {
+  border-radius: 0;
+  clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
+  transform: translate(-50%, -90%) rotate(-35deg);
+  transform-origin: 50% 100%;
 }
 
 /* ─── Status Overlay ─── */
@@ -216,21 +224,21 @@ body {
 #hud-legend {
   position: fixed;
   bottom: 0; right: 0;
-  padding: 32px 48px;
+  padding: 36px 52px;
   z-index: 50;
   pointer-events: none;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
   align-items: flex-end;
 }
 
 .leg {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   font-family: 'Space Mono', monospace;
-  font-size: 8.5px;
+  font-size: 13px;
   letter-spacing: 0.18em;
   opacity: 0.22;
   text-transform: uppercase;
@@ -238,13 +246,63 @@ body {
 }
 .leg.active { opacity: 1; }
 
+.leg-divider {
+  width: 32px;
+  height: 1px;
+  background: rgba(255,255,255,0.12);
+  margin: 3px 0;
+  align-self: flex-end;
+}
+
 .leg-dot {
-  width: 7px; height: 7px;
+  width: 12px; height: 12px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 .leg.active .leg-dot {
   box-shadow: 0 0 8px currentColor;
+}
+
+/* ─── Hand-over-face Warning ─── */
+#hand-warning {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  z-index: 100;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+#hand-warning.visible {
+  opacity: 1;
+  animation: warningFlash 1s ease-in-out infinite;
+}
+
+#hand-warning img {
+  width: clamp(48px, 6vw, 80px);
+  height: auto;
+  filter: drop-shadow(0 0 18px rgba(255, 80, 80, 0.6));
+}
+
+#hand-warning p {
+  font-family: 'Space Mono', monospace;
+  font-size: clamp(14px, 2vw, 22px);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #ff6b6b;
+  text-align: center;
+  text-shadow: 0 0 30px rgba(255, 80, 80, 0.5);
+}
+
+@keyframes warningFlash {
+  0%, 100% { opacity: 0.7; }
+  50%      { opacity: 1;   }
 }
 
 /* ─── Center Instructions ─── */
