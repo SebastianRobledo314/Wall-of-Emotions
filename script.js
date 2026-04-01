@@ -72,6 +72,56 @@ let faceEmotion = 'neutral';
 let faceBox     = null;
 let handOverFace = false;   // is the hand covering the face?
 let audioCtx    = null;     // Web Audio context (needs user gesture to resume)
+let _audioPlaying = false;  // has music been successfully started?
+
+// Try to start music + resume AudioContext (safe to call repeatedly)
+function tryPlayMusic() {
+  if (_audioPlaying) return;
+  initAudioAmplification();
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  if (bgMusic) {
+    bgMusic.volume = 0.35;
+    bgMusic.play().then(() => { _audioPlaying = true; }).catch(() => {});
+  }
+}
+
+// Amplify SFX beyond 1.0 using Web Audio API
+// Deferred — safe to call before DOM elements exist (will just no-op)
+function initAudioAmplification() {
+  if (audioCtx) return; // already initialised
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    if (eraseSfx) {
+      const eraseSource = audioCtx.createMediaElementSource(eraseSfx);
+      const eraseGain   = audioCtx.createGain();
+      eraseGain.gain.value = 3.0;
+      eraseSource.connect(eraseGain);
+      eraseGain.connect(audioCtx.destination);
+    }
+    if (poofSfx) {
+      const poofSource = audioCtx.createMediaElementSource(poofSfx);
+      const poofGain   = audioCtx.createGain();
+      poofGain.gain.value = 3.0;
+      poofSource.connect(poofGain);
+      poofGain.connect(audioCtx.destination);
+    }
+    if (undoSfx) {
+      const undoSource = audioCtx.createMediaElementSource(undoSfx);
+      const undoGain   = audioCtx.createGain();
+      undoGain.gain.value = 3.0;
+      undoSource.connect(undoGain);
+      undoGain.connect(audioCtx.destination);
+    }
+    if (bgMusic) {
+      const musicSource = audioCtx.createMediaElementSource(bgMusic);
+      const musicGain   = audioCtx.createGain();
+      musicGain.gain.value = 1.0;
+      musicSource.connect(musicGain);
+      musicGain.connect(audioCtx.destination);
+    }
+  } catch (e) { console.warn('Web Audio init failed:', e); }
+}
 
 // ─── Face Detection Config ────────────────────────────────────
 const FACE_DETECT_MS  = 120;
@@ -109,47 +159,19 @@ window.addEventListener('DOMContentLoaded', () => {
   undoSfx       = document.getElementById('undo-sfx');
   poofSfx       = document.getElementById('poof-sfx');
 
-  // Amplify SFX beyond 1.0 using Web Audio API
-  // Deferred to first user interaction to avoid suspended AudioContext
-  function initAudioAmplification() {
-    if (audioCtx) return; // already initialised
-    try {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (audioCtx.state === 'suspended') audioCtx.resume();
-      if (eraseSfx) {
-        const eraseSource = audioCtx.createMediaElementSource(eraseSfx);
-        const eraseGain   = audioCtx.createGain();
-        eraseGain.gain.value = 3.0; // 3× amplification
-        eraseSource.connect(eraseGain);
-        eraseGain.connect(audioCtx.destination);
-      }
-      if (poofSfx) {
-        const poofSource = audioCtx.createMediaElementSource(poofSfx);
-        const poofGain   = audioCtx.createGain();
-        poofGain.gain.value = 3.0; // 3× amplification
-        poofSource.connect(poofGain);
-        poofGain.connect(audioCtx.destination);
-      }
-    } catch (e) { console.warn('Web Audio init failed:', e); }
-  }
+  // Audio amplification is now handled by the module-level initAudioAmplification()
 
   resizeAll();
   window.addEventListener('resize', resizeAll);
   bgLoop(performance.now());
 
-  // Start background music on first user interaction (autoplay policy)
-  const startMusic = () => {
-    initAudioAmplification();
-    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-    if (bgMusic) {
-      bgMusic.volume = 0.35;
-      bgMusic.play().catch(() => {});
-    }
-    document.removeEventListener('click', startMusic);
-    document.removeEventListener('pointerdown', startMusic);
-  };
-  document.addEventListener('click', startMusic);
-  document.addEventListener('pointerdown', startMusic);
+  // Unlock audio on ANY user interaction (autoplay policy)
+  const audioEvents = ['click', 'pointerdown', 'touchstart', 'keydown'];
+  function onAudioUnlock() {
+    tryPlayMusic();
+    if (_audioPlaying) audioEvents.forEach(e => document.removeEventListener(e, onAudioUnlock));
+  }
+  audioEvents.forEach(e => document.addEventListener(e, onAudioUnlock));
 
   initHands();
 });
@@ -239,14 +261,14 @@ async function initHands() {
 
     setStatus('Ready', 100);
     statusOverlay.remove();
+
+    // Try to start audio immediately (may fail without user gesture)
+    initAudioAmplification();
+    tryPlayMusic();
+
     detecting = true;
     trailLoop();
     faceDetectLoop();
-
-    // Try starting music now (camera permission counts as interaction)
-    initAudioAmplification();
-    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-    if (bgMusic) bgMusic.play().catch(() => {});
 
   } catch (e) {
     setStatus('Error', 0);
@@ -286,8 +308,15 @@ async function faceDetectLoop() {
 }
 
 // ─── Hand Results Callback ────────────────────────────────────
+let _audioUnlockedByHand = false;
 function onHandResults(results) {
   if (!detecting) return;
+
+  // Try to unlock audio on first hand detection
+  if (!_audioUnlockedByHand && results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+    _audioUnlockedByHand = true;
+    tryPlayMusic();
+  }
 
   // Draw hand preview
   drawHandPreview(results);
