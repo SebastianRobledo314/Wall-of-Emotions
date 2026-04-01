@@ -62,6 +62,8 @@ let undoStart  = 0;         // timestamp when T-shape began
 let isTShape   = false;     // currently forming T?
 let undoHistory = [];        // canvas ImageData snapshots for undo
 let wasDrawing  = false;     // was user drawing in previous frame?
+let poofPlayed  = false;     // has poof SFX been triggered this gesture?
+const POOF_EARLY_MS = 500;   // play poof this many ms before action completes
 let faceEmotion = 'neutral';
 let faceBox     = null;
 let handOverFace = false;   // is the hand covering the face?
@@ -72,7 +74,7 @@ const FACE_MODEL_URL  = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.
 
 // ─── DOM refs ─────────────────────────────────────────────────
 let loadingBar, loadingStatus, statusOverlay, errorMsg;
-let emotionDot, emotionName, instrEl, faceRing, handWarning, bgMusic, eraseSfx;
+let emotionDot, emotionName, instrEl, faceRing, handWarning, bgMusic, eraseSfx, undoSfx, poofSfx;
 
 // ─── Boot ─────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
@@ -99,6 +101,25 @@ window.addEventListener('DOMContentLoaded', () => {
   handWarning   = document.getElementById('hand-warning');
   bgMusic       = document.getElementById('bg-music');
   eraseSfx      = document.getElementById('erase-sfx');
+  undoSfx       = document.getElementById('undo-sfx');
+  poofSfx       = document.getElementById('poof-sfx');
+
+  // Amplify SFX beyond 1.0 using Web Audio API
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (eraseSfx) {
+    const eraseSource = audioCtx.createMediaElementSource(eraseSfx);
+    const eraseGain   = audioCtx.createGain();
+    eraseGain.gain.value = 3.0; // 3× amplification
+    eraseSource.connect(eraseGain);
+    eraseGain.connect(audioCtx.destination);
+  }
+  if (poofSfx) {
+    const poofSource = audioCtx.createMediaElementSource(poofSfx);
+    const poofGain   = audioCtx.createGain();
+    poofGain.gain.value = 3.0; // 3× amplification
+    poofSource.connect(poofGain);
+    poofGain.connect(audioCtx.destination);
+  }
 
   resizeAll();
   window.addEventListener('resize', resizeAll);
@@ -275,7 +296,7 @@ function onHandResults(results) {
     if (oDetected) {
       isOShape = true;
       isTShape = false; undoStart = 0; wasDrawing = false;
-      if (eraseStart === 0) eraseStart = Date.now();
+      if (eraseStart === 0) { eraseStart = Date.now(); poofPlayed = false; }
       curEmotion = null;
       lastTrailPt = null;
       updateHUD(null);
@@ -284,7 +305,7 @@ function onHandResults(results) {
     } else if (tDetected) {
       isTShape = true;
       isOShape = false; eraseStart = 0; wasDrawing = false;
-      if (undoStart === 0) undoStart = Date.now();
+      if (undoStart === 0) { undoStart = Date.now(); poofPlayed = false; }
       curEmotion = null;
       lastTrailPt = null;
       updateHUD(null);
@@ -551,7 +572,7 @@ function trailLoop() {
   const ctx = trailCtx;
   const now = Date.now();
 
-  // ── Draw pencil-style trail segments (flat, no glow) ──
+  // ── Draw pencil-style trail segments with color mixing ──
   ctx.globalCompositeOperation = 'source-over';
 
   while (trail.length > 0) {
@@ -559,11 +580,28 @@ function trailLoop() {
     const col = EMOTIONS[pt.emotion] || EMOTIONS.neutral;
 
     if (lastTrailPt && lastTrailPt.emotion === pt.emotion) {
+      // Sample existing pixel at the midpoint to mix colors
+      const mx = Math.round((lastTrailPt.x + pt.x) / 2);
+      const my = Math.round((lastTrailPt.y + pt.y) / 2);
+      let drawColor = col.hex;
+
+      if (mx >= 0 && mx < W && my >= 0 && my < H) {
+        const pixel = ctx.getImageData(mx, my, 1, 1).data;
+        if (pixel[3] > 20) { // existing color present
+          const newRGB = hexToRGB(col.hex);
+          // Blend 50/50 between existing and new color
+          const blendR = Math.round((pixel[0] + newRGB.r) / 2);
+          const blendG = Math.round((pixel[1] + newRGB.g) / 2);
+          const blendB = Math.round((pixel[2] + newRGB.b) / 2);
+          drawColor = `rgb(${blendR},${blendG},${blendB})`;
+        }
+      }
+
       ctx.save();
       ctx.lineCap  = 'round';
       ctx.lineJoin = 'round';
       ctx.lineWidth   = PENCIL_WIDTH;
-      ctx.strokeStyle = col.hex;
+      ctx.strokeStyle = drawColor;
       ctx.beginPath();
       ctx.moveTo(lastTrailPt.x, lastTrailPt.y);
       ctx.lineTo(pt.x, pt.y);
@@ -580,6 +618,7 @@ function trailLoop() {
   if (isOShape && eraseStart > 0 && curPos) {
     // Start eraser SFX loop
     if (eraseSfx && eraseSfx.paused) {
+      eraseSfx.volume = 1.0;
       eraseSfx.currentTime = 0;
       eraseSfx.play().catch(() => {});
     }
@@ -607,6 +646,15 @@ function trailLoop() {
     eraseCtx.fillText('ERASING', curPos.x, curPos.y + ERASE_RADIUS + 18);
     eraseCtx.restore();
 
+    // Trigger poof SFX 0.5s before completion
+    const erasePoofAt = 1 - (POOF_EARLY_MS / ERASE_HOLD_MS);
+    if (!poofPlayed && progress >= erasePoofAt && poofSfx) {
+      poofSfx.volume = 1.0;
+      poofSfx.currentTime = 0;
+      poofSfx.play().catch(() => {});
+      poofPlayed = true;
+    }
+
     // Full circle reached → erase everything
     if (progress >= 1) {
       ctx.clearRect(0, 0, W, H);
@@ -624,23 +672,44 @@ function trailLoop() {
 
   // ── Undo circle progress (T-shape) — drawn on erase overlay ──
   if (isTShape && undoStart > 0 && curPos) {
+    // Start undo SFX loop
+    if (undoSfx && undoSfx.paused) {
+      undoSfx.volume = 1.0;
+      undoSfx.currentTime = 0;
+      undoSfx.play().catch(() => {});
+    }
+
     const elapsed  = now - undoStart;
     const progress = Math.min(elapsed / UNDO_HOLD_MS, 1);
     const endAngle = -Math.PI / 2 + progress * Math.PI * 2;
 
+    // Interpolate color from white → blue based on progress
+    const uR = Math.round(255 * (1 - progress));
+    const uG = Math.round(255 * (1 - progress));
+    const uB = 255;
+
     eraseCtx.save();
     eraseCtx.lineWidth   = 4;
-    eraseCtx.strokeStyle = 'rgba(255,255,255,0.9)';
+    eraseCtx.strokeStyle = `rgba(${uR},${uG},${uB},0.9)`;
     eraseCtx.beginPath();
     eraseCtx.arc(curPos.x, curPos.y, ERASE_RADIUS, -Math.PI / 2, endAngle);
     eraseCtx.stroke();
 
     // "UNDO" label below progress ring
-    eraseCtx.fillStyle  = 'rgba(255,255,255,0.8)';
+    eraseCtx.fillStyle  = `rgba(${uR},${uG},${uB},0.8)`;
     eraseCtx.font       = '12px "Space Mono", monospace';
     eraseCtx.textAlign  = 'center';
     eraseCtx.fillText('UNDO', curPos.x, curPos.y + ERASE_RADIUS + 18);
     eraseCtx.restore();
+
+    // Trigger poof SFX 0.5s before completion
+    const undoPoofAt = 1 - (POOF_EARLY_MS / UNDO_HOLD_MS);
+    if (!poofPlayed && progress >= undoPoofAt && poofSfx) {
+      poofSfx.volume = 1.0;
+      poofSfx.currentTime = 0;
+      poofSfx.play().catch(() => {});
+      poofPlayed = true;
+    }
 
     // Full circle reached → undo last stroke
     if (progress >= 1) {
@@ -653,7 +722,11 @@ function trailLoop() {
       lastTrailPt = null;
       trail.length = 0;
       undoStart = 0;
+      if (undoSfx) { undoSfx.pause(); undoSfx.currentTime = 0; }
     }
+  } else {
+    // Not undoing → stop SFX if playing
+    if (undoSfx && !undoSfx.paused) { undoSfx.pause(); undoSfx.currentTime = 0; }
   }
 
   requestAnimationFrame(trailLoop);
@@ -690,11 +763,13 @@ function updateRing(cx, cy, fw, fh, hex, drawing) {
     faceRing.style.width       = Math.max(50, fw * 0.5) + 'px';
     faceRing.style.height      = Math.max(60, fh * 0.5) + 'px';
     faceRing.style.background  = 'transparent';
-    faceRing.style.borderColor = hex + '40';
-    faceRing.style.boxShadow   = `0 0 12px ${hex}30, inset 0 0 8px ${hex}18`;
-    faceRing.style.filter      = 'none';
+    faceRing.style.borderColor = 'transparent';
+    faceRing.style.boxShadow   = 'none';
+    faceRing.style.filter      = `drop-shadow(0 0 12px ${hex}30) drop-shadow(0 0 6px ${hex}18)`;
+    faceRing.innerHTML = `<svg viewBox="0 0 100 120" preserveAspectRatio="none"><polygon points="50,5 5,115 95,115" fill="none" stroke="${hex}" stroke-width="2" opacity="0.4"/></svg>`;
   } else {
     faceRing.classList.remove('drawing');
+    faceRing.innerHTML         = '';
     faceRing.style.width       = Math.max(50, fw * 0.5) + 'px';
     faceRing.style.height      = Math.max(60, fh * 0.5) + 'px';
     faceRing.style.background  = 'transparent';
@@ -720,6 +795,15 @@ function showError(msg) {
     errorMsg.textContent = msg;
     errorMsg.style.display = 'block';
   }
+}
+
+function hexToRGB(hex) {
+  const h = hex.replace('#', '');
+  return {
+    r: parseInt(h.substring(0, 2), 16),
+    g: parseInt(h.substring(2, 4), 16),
+    b: parseInt(h.substring(4, 6), 16),
+  };
 }
 
 
